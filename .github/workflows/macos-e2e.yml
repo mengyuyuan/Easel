@@ -13,9 +13,13 @@ permissions:
 
 jobs:
   e2e:
-    name: macOS ask_user end-to-end
-    runs-on: macos-latest
+    name: ask_user end-to-end (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +54,7 @@ jobs:
           "$PY" .ci/probe_launcher.py --run easel/openclaw_cmd.py
           echo "::notice title=launcher::CHECK A PASSED"
 
-      - name: CHECK B - client identity is the canonical macOS tuple (platform=macos, deviceFamily=Mac)
+      - name: CHECK B - client identity matches the canonical OpenClaw tuple for this OS
         run: |
           "$PY" .ci/check_identity.py
 
