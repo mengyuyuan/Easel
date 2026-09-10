@@ -1,0 +1,136 @@
+# TEMPORARY macOS end-to-end verification for ZJU-REAL/Easel PR #8.
+# Runs the real easel web backend on a macOS runner, triggers ask_user and answers it.
+# Lives only on the throwaway branch ci/macos-e2e of the fork.
+name: macOS end-to-end ask_user (temp, PR #8)
+
+on:
+  push:
+    branches: ['ci/macos-e2e']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: macOS ask_user end-to-end
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Environment
+        run: |
+          uname -a
+          node -v
+          npm -v
+          npm prefix -g
+          python3 -V
+
+      - name: Install openclaw@2026.9.2 globally
+        run: |
+          npm install -g openclaw@2026.9.2 --loglevel warn 2>&1 | tail -3
+          OC="$(command -v openclaw)"
+          echo "openclaw on PATH: $OC"
+          echo "resolves to     : $(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$OC")"
+
+      - name: Python venv with the backend deps
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q --upgrade pip
+          "$RUNNER_TEMP/venv/bin/pip" install -q fastapi "uvicorn>=0.30,<1" "sse-starlette>=2.1,<4" "pydantic>=2.7,<3" python-multipart "websocket-client>=1.7,<2" "cryptography>=42"
+          echo "PY=$RUNNER_TEMP/venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: CHECK A - launcher resolves AND runs on macOS
+        run: |
+          "$PY" .ci/probe_launcher.py --run easel/openclaw_cmd.py
+          echo "::notice title=launcher::CHECK A PASSED"
+
+      - name: CHECK B - client identity is the canonical macOS tuple (platform=macos, deviceFamily=Mac)
+        run: |
+          "$PY" .ci/check_identity.py
+
+      - name: Build the React frontend
+        run: |
+          cd web/frontend
+          npm ci --no-audit --no-fund 2>&1 | tail -3
+          npm run build 2>&1 | tail -6
+          ls -la dist/assets
+          grep -l "question-card" dist/assets/*.js && echo "::notice title=frontend::bundle contains question-card"
+
+      - name: Onboard the easel profile (DeepSeek)
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          openclaw --profile easel onboard --non-interactive --accept-risk \
+            --mode local --flow manual \
+            --auth-choice deepseek-api-key --deepseek-api-key "$DEEPSEEK_API_KEY" \
+            --skip-health --skip-channels --skip-skills --skip-ui --skip-hooks --skip-search --skip-daemon 2>&1 | tail -20
+          openclaw --profile easel config get agents.defaults.model.primary
+
+      - name: Configure the gateway for local CLI device pairing
+        run: |
+          openclaw --profile easel config unset gateway.auth.mode || true
+          openclaw --profile easel config unset gateway.auth.token || true
+          openclaw --profile easel config set gateway.port 18789
+          openclaw --profile easel config get gateway
+
+      - name: Start the gateway
+        run: |
+          nohup openclaw --profile easel gateway run --force --allow-unconfigured --bind loopback > /tmp/gw.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -sf --max-time 2 http://127.0.0.1:18789/healthz; then echo; echo "gateway healthy after ${i}s"; break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18789/healthz || { echo "::error title=gateway::not healthy"; tail -60 /tmp/gw.log; exit 1; }
+          echo
+          openclaw --profile easel devices list || true
+
+      - name: Give the local CLI device an operator token with admin scope
+        run: |
+          DEV="$("$PY" .ci/get_device_id.py)"
+          echo "device: $DEV"
+          openclaw --profile easel devices rotate --device "$DEV" --role operator \
+            --scope operator.admin --scope operator.read --scope operator.write
+
+      - name: Restart the gateway so the operator token is cached locally
+        run: |
+          pkill -f "openclaw-gateway" || true
+          sleep 3
+          nohup openclaw --profile easel gateway run --force --allow-unconfigured --bind loopback > /tmp/gw.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -sf --max-time 2 http://127.0.0.1:18789/healthz; then echo; echo "gateway healthy after ${i}s"; break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18789/healthz
+          echo
+          "$PY" -c "import sys,os; sys.path.insert(0,os.getcwd()); from easel.gateway_questions import _load_device, _client_identity; print('identity:', _client_identity()); print('device_auth_token OK:', _load_device()['device_id'][:16])"
+
+      - name: easel ping
+        run: |
+          "$PY" -m easel ping
+
+      - name: Start easel web
+        run: |
+          nohup env EASEL_PORT=7860 "$PY" web/app.py > /tmp/web.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -sf --max-time 2 -o /dev/null http://127.0.0.1:7860/; then echo "web up after ${i}s"; break; fi
+            sleep 1
+          done
+          curl -s -o /dev/null -w "web / -> %{http_code}\n" http://127.0.0.1:7860/
+          curl -s --max-time 8 http://127.0.0.1:7860/api/status | head -c 200; echo
+
+      - name: CHECK C - end-to-end ask_user on macOS
+        run: |
+          "$PY" .ci/e2e_ask_user.py
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "========== /tmp/web.log =========="; tail -80 /tmp/web.log || true
+          echo "========== /tmp/gw.log =========="; tail -80 /tmp/gw.log || true
+          echo "========== gateway file log =========="; tail -60 /tmp/openclaw/*.log 2>/dev/null || true
