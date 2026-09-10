@@ -49,7 +49,7 @@ jobs:
           "$RUNNER_TEMP/venv/bin/pip" install -q fastapi "uvicorn>=0.30,<1" "sse-starlette>=2.1,<4" "pydantic>=2.7,<3" python-multipart "websocket-client>=1.7,<2" "cryptography>=42"
           echo "PY=$RUNNER_TEMP/venv/bin/python" >> "$GITHUB_ENV"
 
-      - name: CHECK A - launcher resolves AND runs on macOS
+      - name: CHECK A - launcher resolves AND runs
         run: |
           "$PY" .ci/probe_launcher.py --run easel/openclaw_cmd.py
           echo "::notice title=launcher::CHECK A PASSED"
@@ -128,7 +128,7 @@ jobs:
           curl -s -o /dev/null -w "web / -> %{http_code}\n" http://127.0.0.1:7860/
           curl -s --max-time 8 http://127.0.0.1:7860/api/status | head -c 200; echo
 
-      - name: CHECK C - end-to-end ask_user on macOS
+      - name: CHECK C - end-to-end ask_user (question event -> answer -> done)
         run: |
           "$PY" .ci/e2e_ask_user.py
 
