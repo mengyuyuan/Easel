@@ -1,0 +1,19 @@
+Windows TUI final screen (2026-09-10 late night, pty capture)
+================================================================
+1
+
+ ❓ Ask User
+ {}
+
+你选了 水 💧
+
+The previous ask_user call was interrupted by a gateway restart, so I don't know whether you actually saw the question.
+Let me re-ask it cleanly.你选了 咖啡 ☕️
+
+（说明一下：之前那次提问被网关重启打断了，我不确定你有没有看到，所以重新问了一遍，现在已收到你的回答。）
+
+你选了 面 🍜
+
+你选了 水 💧
+ connected | idle
+ agent main (main) | session main | deepseek-chat medium | verbose on | deliver:off | tokens 42k/200k (21%)
