@@ -309,7 +309,7 @@ def _proxy_env() -> dict[str, str]:
     env.setdefault('EASEL_ROOT', str(PROJECT_ROOT))
     env.setdefault('http_proxy', os.environ.get('EASEL_PROXY', ''))
     env.setdefault('https_proxy', os.environ.get('EASEL_PROXY', ''))
-    env.setdefault('no_proxy', 'localhost,127.0.0.1,*.xiaohongshu.com,*.devops.xiaohongshu.com,10.*')
+    env.setdefault('no_proxy', 'localhost,127.0.0.1,10.*,*.xiaohongshu.com,*.devops.xiaohongshu.com,*.douyin.com,*.kuaishou.com,*.zhihu.com,*.bilibili.com,*.weixin.qq.com,*.qq.com')
     return env
 
 
@@ -2144,7 +2144,7 @@ async def api_publish(platform: str, req: PublishRequest):
             cmd += ['--desc', req.body[:2000]]
     elif platform == 'douyin':
         base = [py, str(SHARED_SCRIPTS / 'douyin_publish.py')]
-        cmd = base + ['publish-video', '--video', vids[0]] if vids else base + ['publish', '--images', ','.join(imgs)]
+        cmd = base + ['publish-video', '--no-proxy', '--video', vids[0]] if vids else base + ['publish', '--no-proxy', '--images', ','.join(imgs)]
         cmd += ['--title', title, '--content', req.body, '--tags', tags, '--exec']
         # 抖音发布可能触发风控短信墙——异步跑 + 状态/验证码文件，前端轮询到 sms_required 时弹输入框
         PUBLISH_DIR.mkdir(parents=True, exist_ok=True)

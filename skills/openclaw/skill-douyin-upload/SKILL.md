@@ -43,7 +43,7 @@ check（环境就绪？）
   → 发布前人设检查（见下）
   → publish / publish-video --exec（首次建议 --headed 校验选择器，OK 后 headless 复跑）
   → 【若弹短信墙】问用户验证码 → 回填 → 脚本自动过墙（见「短信验证码处理」）
-  → 成功校验（脚本内置：发布后 toast「发布成功」）
+  → 成功校验（脚本内置：发布后**读回创作者中心作品列表对账**——标题+时间窗对上该作品才算 success）
   → 发布后留痕（见下）
 ```
 
@@ -55,20 +55,33 @@ check（环境就绪？）
 
 1. **后台**启动发布（务必带 `--status-file` 和 `--sms-code-file`，路径用 `outputs/_login/` 下）：
    ```bash
-   python skills/shared/scripts/douyin_publish.py publish-video --exec \
+   python skills/shared/scripts/douyin_publish.py publish-video --exec --no-proxy \
      --title "标题" --content "简介" --video /abs/v.mp4 --tags "旅行,攻略" \
      --status-file outputs/_login/douyin.publish.json \
      --sms-code-file outputs/_login/douyin.code
    ```
-2. **轮询** `outputs/_login/douyin.publish.json`（JSON，字段 `state`：`starting`→可能 `sms_required`→`verifying`→`success`/`error`）。
-3. 读到 `state=="sms_required"`：把该文件里的 `message`（含发码手机尾号）转达用户，**在对话里向用户要验证码**。
+2. **轮询**（**每 2–3 秒查一次，用短命令循环**——别一次性长睡眠干等，墙一出现你才能立刻反应）：
+   ```bash
+   sleep 3; cat outputs/_login/douyin.publish.json
+   ```
+   状态机（JSON 字段 `state`）：`starting`→可能 `sms_required`→`verifying`→`success`/`error`。**`success` 只在发布后读回创作者中心作品列表、对账通过才写入**，message 里带核验到的作品 id 与状态；读回没对上落 `error`，message 区分三种：登录态失效（需重新登录）/ 列表暂未见本次内容（需到内容管理页人工核对）/ 读回通道异常。
+3. 读到 `state=="sms_required"`（含『正在发送验证码』阶段——**看到就立即弹，不必等短信到**）：**马上调用 `ask_user` 工具弹【验证码卡片】要码——不要用普通文字消息**（文字没有输入框、容易被错过；卡片自带「自行输入…」填空，用户填完提交你直接拿到数字）。参数模板（`options` 必需 2–4 个；验证码本身走卡片自带的自由输入）：
+   ```json
+   {"questions":[{"id":"sms_code","header":"发布验证","question":"抖音发布触发短信验证：请把手机收到的 6 位验证码填进来（点「自行输入…」后输入数字）。","options":[{"label":"重新发送验证码"},{"label":"取消本次发布"}]}],"timeoutSeconds":300}
+   ```
+   用户提交后按答案分流：
+   - **纯数字（4–8 位）** → 进第 4 步写码文件；
+   - **「重新发送验证码」** → 创建重发信号文件（`printf '' > outputs/_login/douyin.code.resend` 或 `touch outputs/_login/douyin.code.resend`）；脚本收到信号会在墙上点「重新发送」再下发 → **立刻再弹一张卡**（问题改为「已重发——把新收到的验证码填进来；仍未收到就选『还是没收到』，稍后我再重试」）；
+   - **「取消本次发布」** → 告知用户脚本会自行超时退出（或等他确认后收尾）。
 4. 拿到验证码后，把**纯数字**写进码文件（一次性消费，脚本读走即删）：
    ```bash
    printf '%s' "123456" > outputs/_login/douyin.code
    ```
 5. 继续轮询直到 `success`/`error`。码错会退回 `sms_required`，可再要一次重写。
 
-要点：验证码文件内容是纯数字（4–8 位）；不要同步前台阻塞跑发布再想中途问用户（Bash 会一直卡住直到脚本退出）。发布页（Web「发布中心」）已用同一套文件协议自动弹框，无需 agent 介入。
+要点：验证码文件内容是纯数字（4–8 位）；**全程保持"后台脚本 + 短轮询"模式**——不要同步前台阻塞跑发布再想中途问用户（Bash 会一直卡住直到脚本退出）。发布页（Web「发布中心」）已用同一套文件协议自动弹框，无需 agent 介入。
+
+**速度要点（决定成败）**：墙出现 → 脚本识别（≤15s）→ 你读到 `sms_required` → **数秒内**弹出卡片（所以轮询别用长 sleep；读到就弹，别先解释）→ 用户提交 → **立即**写码文件（一条 `printf` 的事，不拖）。任何环节拖 30 秒以上，用户手机上的验证码就可能过期要重发。
 
 ## 发布前人设检查（有 Profile 时）
 
