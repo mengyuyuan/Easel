@@ -1317,6 +1317,8 @@ async def api_chat_stream(req: ChatRequest):
             }
             headers = {"x-openclaw-session-key": f"agent:main:{sk}"}
             tool_noted = False
+            saw_done = False
+            errored = False
             try:
                 import httpx as _httpx
                 timeout = _httpx.Timeout(TIMEOUT_CHAT + 60, connect=10)
@@ -1333,11 +1335,16 @@ async def api_chat_stream(req: ChatRequest):
                                 continue
                             payload = line[6:]
                             if payload == "[DONE]":
+                                saw_done = True
                                 break
                             try:
                                 d = json.loads(payload)
                             except ValueError:
                                 continue
+                            if d.get("error"):
+                                errored = True
+                                to_client("error", f"❌ 模型服务错误：{str(d['error'])[:180]}")
+                                break
                             delta = (d.get("choices") or [{}])[0].get("delta") or {}
                             c = delta.get("content")
                             if c:
@@ -1349,6 +1356,9 @@ async def api_chat_stream(req: ChatRequest):
                 raise
             except Exception as e:  # noqa: BLE001
                 to_client("error", f"❌ 网关连接失败：{str(e)[:140]}")
+            else:
+                if not saw_done and not errored:
+                    to_client("error", "⚠️ 对话流提前中断（未收到完成标记）——模型服务可能瞬时异常，请稍后重试")
             finally:
                 hproc.finish()
 
